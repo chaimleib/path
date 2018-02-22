@@ -9,94 +9,144 @@ import (
 )
 
 type Opts struct{
-  VarName string
-  Commands []Command
+  Commands []*Command
+  ExtraArgs []*Arg
+  AllArgs []string
+}
+
+func NewOpts(osArgs []string) *Opts {
+  self := new(Opts)
+  self.Commands = make([]*Command, 0)
+  self.ExtraArgs = make([]*Arg, 0)
+  self.AllArgs = osArgs
+  return self
+}
+
+func (self *Opts) LastCommand() *Command {
+  l := len(self.Commands) - 1
+  if l == -1 {
+    panic("can't get LastCommand()")
+  }
+  return self.Commands[l]
+}
+
+func (self *Opts) AppendCommand(op string, i int) {
+  self.Commands = append(self.Commands, NewCommand(op, i))
+}
+
+func (self *Opts) AppendExtraArg(arg string, i int) {
+  self.ExtraArgs = append(self.ExtraArgs, NewArg(arg, i))
+}
+
+type Arg struct {
+  Text string
+  Index int
+}
+
+func NewArg(text string, i int) *Arg {
+  self := new(Arg)
+  self.Text = text
+  self.Index = i
+  return self
 }
 
 type Command struct{
   Operation string
-  Arg string
+  Args []*Arg
+  AllArgsIndex int
 }
 
-func main() {
-  opts, err := parseOpts()
-  if err != nil {
-    log.Fatal(err)
-  }
-  execute(opts)
+func NewCommand(op string, i int) *Command {
+  self := new(Command)
+  self.Operation = op
+  self.Args = make([]*Arg, 0)
+  self.AllArgsIndex = i
+  return self
 }
 
-func parseOpts() (*Opts, error) {
-  opts := new(Opts)
-  opts.Commands = make([]Command, 0)
-  nonFlags := make([]string, 0)
+// Sorts arguments between Commands (beginning with a "-" and a letter for id)
+// and ExtraArgs, not tied to any Command. 0 or 1 ExtraArgs are expected, and
+// certain Commands expect no sibling Commands.
+func (self *Opts) Parse() error {
   nextLiteral := false
-  setLastArg := false
-  for _, arg := range os.Args[1:] {
+  argsLeft := 0
+  for i, arg := range self.AllArgs {
     if nextLiteral {
-      if setLastArg {
-        lastCmd := opts.Commands[len(opts.Commands)-1]
-        lastCmd.Arg = arg
-        setLastArg = false
-      } else {
-        // parse as nonFlag
-        nonFlags = append(nonFlags, arg)
-      }
       nextLiteral = false
+      if argsLeft > 0 {
+        self.LastCommand().AppendArg(arg, i)
+        argsLeft--
+      } else {
+        self.AppendExtraArg(arg, i)
+      }
       continue
     }
     if strings.HasPrefix(arg, "-") {
-      if arg == "-" {
+      if arg == "-" { // bare "-" escapes the next argument
         nextLiteral = true
         continue
       }
       cmd := arg[1:]
       switch cmd[0] {
       case 'l':
-        opts.Commands = append(opts.Commands, Command{
-          Operation: cmd,
-          Arg: cmd[1:],
-        })
-        if cmd[1:] == "" {
-          setLastArg = true
+        self.AppendCommand(cmd, i)
+        cmdArg := cmd[1:]
+        if cmdArg != "" {
+          self.LastCommand().AppendArg(cmdArg, i)
+          argsLeft = 0
         }
       default:
-        return nil, fmt.Errorf("unknown flag: %q", arg)
+        return fmt.Errorf("unknown flag: %q", arg)
+      }
+    } else {
+      // no '-' prefix
+      if argsLeft > 0 {
+        self.LastCommand().AppendArg(arg, i)
+        argsLeft--
+      } else {
+        self.AppendExtraArg(arg, i)
       }
     }
-    // no '-' prefix
-    if setLastArg {
-      lastCmd := opts.Commands[len(opts.Commands)-1]
-      lastCmd.Arg = arg
-      setLastArg = false
-    } else {
-      nonFlags = append(nonFlags, arg)
-    }
   }
-  switch len(nonFlags) {
-  case 0:
-    opts.VarName = "PATH"
-  case 1:
-    opts.VarName = nonFlags[0]
-  default:
-    return nil, fmt.Errorf(
-      "expected only one variable name, got %d", len(nonFlags))
+  return nil
+}
+
+func (self *Command) AppendArg(arg string, i int) {
+  self.Args = append(self.Args, NewArg(arg, i))
+}
+
+func main() {
+  opts := NewOpts(os.Args[1:])
+  err := opts.Parse()
+  if err != nil {
+    log.Fatal(err)
   }
-  return opts, nil
+  execute(opts)
 }
 
 func execute(opts *Opts) error {
+  pathVar := "PATH" // default
+  if len(opts.ExtraArgs) == 1 {
+    pathVar = opts.ExtraArgs[0].Text
+  } else if len(opts.ExtraArgs) != 0 {
+    return fmt.Errorf(
+      "only one path variable is allowed, found more than one: %q",
+      opts.ExtraArgs)
+  }
   for _, cmd := range opts.Commands {
     switch cmd.Operation {
     case "l":
-      paths, err := core.List(opts.VarName)
+      if len(opts.Commands) > 1 {
+        return fmt.Errorf("-l can't be with other commands")
+      }
+      paths, err := core.List(pathVar)
       if err != nil {
-        log.Fatal(err)
+        return err
       }
       pathLines := strings.Join(paths, "\n")
       fmt.Println(pathLines)
     default:
-      return fmt.Errorf("unknown command: %q", cmd)
+      return fmt.Errorf("unknown command: %q", opts.AllArgs[cmd.AllArgsIndex])
     }
   }
   return nil

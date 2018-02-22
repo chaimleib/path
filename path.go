@@ -9,8 +9,38 @@ import (
   "strings"
 )
 
+type Spec struct {
+  letters string
+  words   []string
+  help string
+  minArgs int
+  maxArgs int
+}
+
+func (self Spec) Letters() []rune {
+  return []rune(self.letters)
+}
+
+func (self Spec) Words() []string {
+  return self.words
+}
+
+func (self Spec) Help() string {
+  return self.help
+}
+
+func (self Spec) ExpectedArgs(args []*opts.Arg) int {
+  return self.maxArgs - len(args)
+}
+
+func (self Spec) ArgsRequired(args []*opts.Arg) bool {
+  return len(args) < self.minArgs
+}
+
 func main() {
-  opts := opts.New(os.Args[1:], nil) // TODO: use []CommandSpec
+  opts := opts.New(os.Args[1:], []opts.CommandSpec{
+    Spec{"l", []string{"list"}, "list members line-by-line", 0, 0},
+  }) // TODO: use []CommandSpec
   err := opts.Parse()
   if err != nil {
     log.Fatal(err)
@@ -28,7 +58,7 @@ func execute(opts *opts.Opts) error {
       opts.ExtraArgs)
   }
   for _, cmd := range opts.Commands {
-    switch cmd.Operation {
+    switch cmd.Text {
     case "l":
       if len(opts.Commands) > 1 {
         return fmt.Errorf("-l can't be with other commands")
@@ -40,7 +70,7 @@ func execute(opts *opts.Opts) error {
       pathLines := strings.Join(paths, "\n")
       fmt.Println(pathLines)
     default:
-      return fmt.Errorf("unknown command: %q", opts.AllArgs[cmd.AllArgsIndex])
+      return fmt.Errorf("unknown command: %q", opts.AllArgs[cmd.Index])
     }
   }
   return nil

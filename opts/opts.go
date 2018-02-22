@@ -3,6 +3,7 @@ package opts
 import (
   "fmt"
   "strings"
+  "unicode/utf8"
 )
 
 type Opts struct{
@@ -16,8 +17,8 @@ type CommandSpec interface {
   Letters() []rune
   Words()   []string
   Help()    string
-  ExpectedArgs() int
-  ArgsRequired() bool
+  ExpectedArgs(args []*Arg) int
+  ArgsRequired(args []*Arg) bool
 }
 
 func New(osArgs []string, menu []CommandSpec) *Opts {
@@ -59,8 +60,8 @@ func (self *Opts) LastCommand() *Command {
   return self.Commands[l]
 }
 
-func (self *Opts) AppendCommand(op string, i int) {
-  self.Commands = append(self.Commands, NewCommand(op, i))
+func (self *Opts) AppendCommand(op string, i int, spec CommandSpec) {
+  self.Commands = append(self.Commands, NewCommand(op, i, spec))
 }
 
 func (self *Opts) AppendExtraArg(arg string, i int) {
@@ -72,43 +73,70 @@ func (self *Opts) AppendExtraArg(arg string, i int) {
 // certain Commands expect no sibling Commands.
 func (self *Opts) Parse() error {
   nextLiteral := false
-  argsLeft := 0
   for i, arg := range self.AllArgs {
-    if nextLiteral {
+    if !strings.HasPrefix(arg, "-") || nextLiteral {
       nextLiteral = false
-      if argsLeft > 0 {
-        self.LastCommand().AppendArg(arg, i)
-        argsLeft--
+      if lcmd := self.LastCommand(); lcmd != nil && lcmd.ExpectedArgs() > 0 {
+        lcmd.AppendArg(arg, i)
       } else {
         self.AppendExtraArg(arg, i)
       }
       continue
     }
-    if strings.HasPrefix(arg, "-") {
-      if arg == "-" { // bare "-" escapes the next argument
-        nextLiteral = true
-        continue
+    if arg == "-" { // bare "-" escapes the next argument
+      nextLiteral = true
+      continue
+    }
+    if arg == "--" { // stop Commands, rest go to extra args
+      extrasIndex := i + 1
+      for k, arg := range self.AllArgs[extrasIndex:] {
+        self.AppendExtraArg(arg, k + extrasIndex)
       }
-      cmd := arg[1:]
-      switch cmd[0] {
-      case 'l':
-        self.AppendCommand(cmd, i)
-        cmdArg := cmd[1:]
-        if cmdArg != "" {
-          self.LastCommand().AppendArg(cmdArg, i)
-          argsLeft = 0
-        }
-      default:
-        return fmt.Errorf("unknown flag: %q", arg)
+      break
+    }
+    var cmd, cmdArg string
+    var spec CommandSpec
+    prefix := "-"
+    if strings.HasPrefix(arg, "--") {
+      prefix = "--"
+      kv := strings.SplitN(arg[2:], "=", 2)
+      cmd = kv[0]
+      spec = self.MenuWord(cmd)
+      if len(kv) == 2 {
+        cmdArg = kv[1]
       }
     } else {
-      // no '-' prefix
-      if argsLeft > 0 {
-        self.LastCommand().AppendArg(arg, i)
-        argsLeft--
-      } else {
-        self.AppendExtraArg(arg, i)
+      cmdRune, size := utf8.DecodeRuneInString(arg[1:])
+      cmd = string(cmdRune)
+      spec = self.MenuLetter(cmdRune)
+      cmdArg = arg[1 + size:]
+    }
+    self.AppendCommand(cmd, i, spec)
+    if spec == nil {
+      return fmt.Errorf("unknown option: %s in: %s", self.LastCommand(), arg)
+    }
+    if cmdArg == "" {
+      continue
+    }
+    if lcmd := self.LastCommand(); lcmd.ExpectedArgs() > 0 {
+      lcmd.AppendArg(cmdArg, i)
+      continue
+    }
+    if prefix == "--" {
+      return fmt.Errorf("--%s takes no values, but saw %s", cmd, arg)
+    }
+    // series of single-letter flags
+    for _, flag := range cmdArg {
+      spec = self.MenuLetter(flag)
+      self.AppendCommand(string(flag), i, spec)
+      if spec == nil {
+        return fmt.Errorf("unknown option: %s in: %s", self.LastCommand(), arg)
       }
+    }
+  }
+  for _, opt := range self.Commands {
+    if opt.ArgsRequired() {
+      return fmt.Errorf("%s is missing a value", opt)
     }
   }
   return nil

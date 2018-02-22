@@ -45,6 +45,9 @@ func main() {
   if err != nil {
     log.Fatal(err)
   }
+  if len(opts.Commands) == 0 {
+    log.Fatal("no commands found")
+  }
   execute(opts)
 }
 

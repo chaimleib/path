@@ -55,7 +55,7 @@ func (self *Opts) MenuWord(w string) CommandSpec {
 func (self *Opts) LastCommand() *Command {
   l := len(self.Commands) - 1
   if l == -1 {
-    panic("can't get LastCommand()")
+    return nil
   }
   return self.Commands[l]
 }

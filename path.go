@@ -40,18 +40,19 @@ func (self Spec) ArgsRequired(args []*opts.Arg) bool {
 func main() {
   opts := opts.New(os.Args[1:], []opts.CommandSpec{
     Spec{"l", []string{"list"}, "list members line-by-line", 0, 0},
-  }) // TODO: use []CommandSpec
-  err := opts.Parse()
-  if err != nil {
+  })
+  if err := opts.Parse(); err != nil {
     log.Fatal(err)
   }
-  if len(opts.Commands) == 0 {
-    log.Fatal("no commands found")
+  if err := execute(opts); err != nil {
+    log.Fatal(err)
   }
-  execute(opts)
 }
 
 func execute(opts *opts.Opts) error {
+  if len(opts.Commands) == 0 {
+    log.Fatal("no commands found")
+  }
   pathVar := "PATH" // default
   if len(opts.ExtraArgs) == 1 {
     pathVar = opts.ExtraArgs[0].Text
